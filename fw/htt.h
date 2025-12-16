@@ -275,9 +275,10 @@
  * 3.145 Add 3rd bit for rx_hdr_len in RX_RING_SELECTION_CFG
  * 3.146 Add HTT_RXOLE_ASE_STATUS_RING def.
  * 3.147 Add direct_refill flag in SRING_SETUP msg.
+ * 3.148 Add HTT_PEER_CFR_CAPTURE_BW_320MHZ def.
  */
 #define HTT_CURRENT_VERSION_MAJOR 3
-#define HTT_CURRENT_VERSION_MINOR 147
+#define HTT_CURRENT_VERSION_MINOR 148
 
 #define HTT_NUM_TX_FRAG_DESC  1024
 
@@ -880,6 +881,7 @@ typedef enum {
     HTT_STATS_TXBF_OFDMA_BN_STEER_TAG               = 229, /* htt_stats_txbf_ofdma_bn_steer_tlv */
     HTT_STATS_TXBF_OFDMA_BN_STEER_MPDU_TAG          = 230, /* htt_stats_txbf_ofdma_bn_steer_mpdu_tlv */
     HTT_STATS_TXBF_OFDMA_BN_PARBW_TAG               = 231, /* htt_stats_txbf_ofdma_bn_parbw_tlv */
+    HTT_STATS_OPTIONAL_CONFIGS_TAG                  = 232, /* htt_stats_optional_configs_tlv */
 
     HTT_STATS_MAX_TAG,
 } htt_stats_tlv_tag_t;
@@ -20074,6 +20076,7 @@ typedef enum {
     HTT_PEER_CFR_CAPTURE_BW_80MHZ    = 2,
     HTT_PEER_CFR_CAPTURE_BW_160MHZ   = 3,
     HTT_PEER_CFR_CAPTURE_BW_80_80MHZ = 4,
+    HTT_PEER_CFR_CAPTURE_BW_320MHZ   = 5,
     HTT_PEER_CFR_CAPTURE_BW_MAX,
 } HTT_PEER_CFR_CAPTURE_BW;
 

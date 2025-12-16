@@ -747,6 +747,13 @@ typedef enum {
     /** WMI cmd used to control DPS Assisting AP role config */
     WMI_VDEV_ENERGY_MGMT_DPS_ASSISTING_ROLE_CONFIG_CMDID,
 
+    /** WMI cmd for unified connect */
+    WMI_VDEV_UNIFIED_CONNECT_CMDID,
+
+    /** WMI cmd for unified disconnect */
+    WMI_VDEV_UNIFIED_DISCONNECT_CMDID,
+
+
     /* peer specific commands */
 
     /** create a peer */
@@ -2070,6 +2077,10 @@ typedef enum {
     WMI_VDEV_OOB_CONNECTION_RESP_EVENTID,
     WMI_VDEV_VBSS_CONFIG_EVENTID,
     WMI_VDEV_TPC_IE_POWER_EVENTID,
+    /** WMI event for unified connect */
+    WMI_VDEV_UNIFIED_CONNECT_EVENTID,
+    /** WMI event for unified disconnect */
+    WMI_VDEV_UNIFIED_DISCONNECT_EVENTID,
 
     /* peer specific events */
     /** FW reauet to kick out the station for reasons like inactivity,lack of response ..etc */
@@ -2662,6 +2673,9 @@ typedef enum {
     /** WMI events related to Audio Frame aggregation feature **/
     WMI_AUDIO_AGGR_REPORT_STATISTICS_EVENTID = WMI_EVT_GRP_START_ID(WMI_GRP_AUDIO),
     WMI_AUDIO_AGGR_SCHED_METHOD_EVENTID,
+
+    /** WMI events related to CFR capture response event */
+    WMI_CFR_CAPTURE_FILTER_RESP_EVENTID = WMI_EVT_GRP_START_ID(WMI_GRP_CFR_CAPTURE),
 
     /** Vendor defined WMI events **/
     WMI_VENDOR_PDEV_EVENTID = WMI_EVT_GRP_START_ID(WMI_GRP_VENDOR),
@@ -5129,8 +5143,12 @@ typedef struct {
      *      to the secondary refill ring.
      *      Refer to the below definitions of WMI_RSRC_CFG_HOST_SERVICE_FLAG
      *      DIRECT_REFILL_SUPPORT_GET and _SET macros.
+     *  Bit 24
+     *      This bit will be set by host to inform FW that HOST will be
+     *      expecting and will be able to handle DCS stats event sent
+     *      by FW for concurrent vdevs (event can support max 2 vdevs data).
      *
-     *  Bits 31:24 - Reserved
+     *  Bits 31:25 - Reserved
      */
     A_UINT32 host_service_flags;
 
@@ -5737,6 +5755,11 @@ typedef struct {
 #define WMI_RSRC_CFG_HOST_SERVICE_FLAG_DIRECT_REFILL_SUPPORT_SET(host_service_flags, val) \
          WMI_SET_BITS(host_service_flags, 23, 1, val)
 
+/* This bit will be used to inform FW that HOST will be handling DCS stats for multiple vdevs (max 2) */
+#define WMI_RSRC_CFG_DCS_STATS_FOR_2VDEVS_ENABLE_GET(host_service_flags) \
+    WMI_GET_BITS(host_service_flags, 24, 1)
+#define WMI_RSRC_CFG_DCS_STATS_FOR_2VDEVS_ENABLE_SET(host_service_flags, value) \
+    WMI_SET_BITS(host_service_flags, 24, 1, value)
 
 #define WMI_RSRC_CFG_CARRIER_CFG_CHARTER_ENABLE_GET(carrier_config) \
     WMI_GET_BITS(carrier_config, 0, 1)
@@ -10230,6 +10253,9 @@ typedef enum {
 
     /* To enable/disable XPAN SAP + STA power optimization */
     WMI_PDEV_PARAM_XPAN_STA_PWRSAVE_ENABLE,
+
+    /** Beacon antenna for smart antenna */
+    WMI_PDEV_PARAM_SMART_ANTENNA_BEACON_ANTENNA,
 } WMI_PDEV_PARAM;
 
 #define WMI_PDEV_ONLY_BSR_TRIG_IS_ENABLED(trig_type) WMI_GET_BITS(trig_type, 0, 1)
@@ -19900,6 +19926,12 @@ typedef enum {
      */
     WMI_VDEV_PARAM_DSMPS_CONTROL,                         /* 0xCC */
 
+    /*
+     * Support P2P GO cancel long duration one-shot NOA
+     *      0 - Disable P2P GO cancel NOA feature - default value
+     *      1 - Enable P2P GO cancel NOA feature
+     */
+    WMI_VDEV_PARAM_SET_GO_CANCEL_NOA,                     /* 0xCD */
 
 
     /*=== ADD NEW VDEV PARAM TYPES ABOVE THIS LINE ===
@@ -21550,7 +21582,7 @@ typedef struct {
     union {
         struct {
             A_UINT32 hw_peer_id_valid :1,
-                     is_llbi_peer:     1,
+                     is_11bi_peer     :1,
                      reserved         :30;
         };
         A_UINT32 flags;
@@ -23163,6 +23195,24 @@ typedef struct _wlan_dcs_im_tgt_stats {
 
     /** BSS rx cycle count */
     A_UINT32 my_bss_rx_cycle_count;
+
+    /*------*/
+    /* vdev id and pdev id will be added accordingly in each TLV,
+     * when combined event for 2 vdevs in case of concurrency.
+     */
+
+    /* vdev_id_and_pdev_id_valid:
+     * If set, then the below vdev_id and pdev_id fields have valid values.
+     * If not set, then the below vdev_id and pdev_id fields must be ignored.
+     */
+    A_UINT32 vdev_id_and_pdev_id_valid;
+
+    /** vdev id **/
+    A_UINT32 vdev_id;  /* unique vdev id for DCS stats info */
+
+    /** pdev id **/
+    A_UINT32 pdev_id;  /* unique pdev id for DCS stats info */
+    /*------*/
 } wlan_dcs_im_tgt_stats_t;
 
 typedef struct wlan_dcs_awgn_info {
@@ -23252,7 +23302,10 @@ typedef struct {
  * elements (not arrays).     union { wlan_dcs_cw_int cw_int; wlan_dcs_im_tgt_stats_t   wlan_stat; } int_event;
  *
  *       wlan_dcs_cw_int            cw_int[];   <-- cw_interference event
- *       wlan_dcs_im_tgt_stats_t   wlan_stat[]; <-- wlan im interference stats
+ *       wlan_dcs_im_tgt_stats_t   wlan_stat[]; <-- wlan im interference stats,
+ *                                                  Contains vdev_id + pdev_id
+ *                                                  to specify who the stats
+ *                                                  are for.
  *       wmi_dcs_awgn_int_t        awgn_int[];  <-- Additive white Gaussian noise (AWGN) interference
  *       wmi_dcs_obss_int_t        obss_int[];  <-- Overlapping Basic Service Set (OBSS) interference
  */
@@ -29407,6 +29460,7 @@ typedef enum {
     WMI_PEER_CFR_CAPTURE_BW_80MHZ    = 2,
     WMI_PEER_CFR_CAPTURE_BW_160MHZ   = 3,
     WMI_PEER_CFR_CAPTURE_BW_80_80MHZ = 4,
+    WMI_PEER_CFR_CAPTURE_BW_320MHZ   = 5,
     WMI_PEER_CFR_CAPTURE_BW_MAX,
 } WMI_PEER_CFR_CAPTURE_BW;
 
@@ -33397,6 +33451,32 @@ typedef enum {
     WMI_USD_SERVICE_PROTOCOL_TYPE_GENERIC = 2,
     WMI_USD_SERVICE_PROTOCOL_TYPE_CSA_MATTER = 3,
 } WMI_USD_SERVICE_PROTOCOL_TYPE;
+
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_vdev_unified_connect_cmd_fixed_param */
+    /** unique id identifying the VDEV, generated by the caller */
+    A_UINT32 vdev_id;
+} wmi_vdev_unified_connect_cmd_fixed_param;
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_vdev_unified_disconnect_cmd_fixed_param */
+    /** unique id identifying the VDEV, generated by the caller */
+    A_UINT32 vdev_id;
+} wmi_vdev_unified_disconnect_cmd_fixed_param;
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_vdev_unified_connect_event_fixed_param */
+    /** unique id identifying the VDEV, generated by the caller */
+    A_UINT32 vdev_id;
+} wmi_vdev_unified_connect_event_fixed_param;
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_vdev_unified_disconnect_event_fixed_param */
+    /** unique id identifying the VDEV, generated by the caller */
+    A_UINT32 vdev_id;
+} wmi_vdev_unified_disconnect_event_fixed_param;
+
 
 #define EXPIRY_TIME_IN_TSF_TIMESTAMP_OFFSET     0
 #define EXPIRY_TIME_IN_TSF_TIMESTAMP_MASK       1
@@ -37901,6 +37981,7 @@ typedef enum {
     WMI_REQUEST_CTRL_PATH_PDEV_CONN_STAT    = 21,
     WMI_REQUEST_CTRL_PATH_ML_RECONFIG_STAT  = 22,
     WMI_REQUEST_CTRL_PATH_STA_DAR_STAT      = 23,
+    WMI_REQUEST_ENHANCED_STAT               = 24,
 } wmi_ctrl_path_stats_id;
 
 typedef enum {
@@ -46968,7 +47049,12 @@ typedef struct {
     A_UINT32 correlation_info_2;
     /* Bits 1:0:    TX status (if any); values defined in enum
     *               WMI_FRAME_TX_STATUS
-     * Bits 30:2:   reserved (set to 0x0)
+     * Bits 28:2:   reserved (set to 0x0)
+     * Bit  29:     frame sequence control valid flag:
+     *              The frame_seq_ctrl word / bitfields in
+     *              wmi_peer_cfr_capture_event_fixed_param must be ignored
+     *              unless this flag is set.
+     * Bit  30:     PS failed flag
      * Bit  31:     Status of the CFR capture of the peer
      *              1 (True) - Successful; 0 (False) - Not successful
      */
@@ -47046,7 +47132,40 @@ typedef struct {
      * Bits 16:31      reserved
      */
     A_UINT32 mcs_gi_info;
+
+    /*
+     * 802.11 Sequence Control field from the transmitted frame.
+     * Added for enhanced CFR correlation.
+     *
+     * Bits 0:3    Fragment number
+     * Bits 4:15   Sequence number
+     * Bits 16:31  Reserved (set to 0)
+     *
+     * Value is 0 if not available.
+     *
+     * NOTE: This field is appended for backward compatibility.
+     * Older hosts will ignore this field as they parse based on
+     * their known structure size.
+     */
+    A_UINT32 frame_seq_ctrl;
 } wmi_peer_cfr_capture_event_fixed_param;
+
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_TX      0x00000003
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_TX_S    0
+
+/* bits 28:2 are reserved */
+
+/* frame_seq_ctrl field is valid */
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_FRAME_SEQ_VALID   0x20000000
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_FRAME_SEQ_VALID_S 29
+
+/* Failed to capture CFR as peer is in power save mode */
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_PS_FAILED         0x40000000
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_PS_FAILED_S       30
+
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_OK                0x80000000
+#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_OK_S              31
+
 
 #define WMI_CFR_MCS_GET(mcs_gi_info) \
         WMI_GET_BITS(mcs_gi_info, 0, 8)
@@ -47059,6 +47178,110 @@ typedef struct {
 
 #define WMI_CFR_GI_TYPE_SET(mcs_gi_info, value) \
         WMI_SET_BITS(mcs_gi_info, 8, 8, value)
+
+/* Macros to get/set fragment number from frame_seq_ctrl field */
+#define WMI_CFR_FRAME_FRAG_NUM_GET(frame_seq_ctrl) \
+        WMI_GET_BITS(frame_seq_ctrl, 0, 4)
+#define WMI_CFR_FRAME_FRAG_NUM_SET(frame_seq_ctrl, value) \
+        WMI_SET_BITS(frame_seq_ctrl, 0, 4, value)
+
+/* Macros to get/set sequence number from frame_seq_ctrl field */
+#define WMI_CFR_FRAME_SEQ_NUM_GET(frame_seq_ctrl) \
+        WMI_GET_BITS(frame_seq_ctrl, 4, 12)
+#define WMI_CFR_FRAME_SEQ_NUM_SET(frame_seq_ctrl, value) \
+        WMI_SET_BITS(frame_seq_ctrl, 4, 12, value)
+
+/**
+ * CFR capture filter command response status codes
+ * These values are sent to host in wmi_cfr_capture_filter_resp_event
+ */
+typedef enum {
+    /** Configuration successful */
+    WMI_CFR_CAPTURE_FILTER_STATUS_SUCCESS        = 0,
+
+    /** Channel not specified for unassoc mode */
+    WMI_CFR_CAPTURE_FILTER_STATUS_NO_CHANNEL     = 1,
+
+    /** Invalid MAC ID */
+    WMI_CFR_CAPTURE_FILTER_STATUS_INVALID_MAC_ID = 2,
+
+    /** OCS channel request failed */
+    WMI_CFR_CAPTURE_FILTER_STATUS_OCS_FAILED     = 3,
+
+    /** vdev not found */
+    WMI_CFR_CAPTURE_FILTER_STATUS_NO_VDEV        = 4,
+
+    /** Invalid param */
+    WMI_CFR_CAPTURE_FILTER_STATUS_INVALID_PARAM  = 5,
+} wmi_cfr_capture_filter_status_t;
+
+typedef struct {
+    A_UINT32 tlv_header;
+    /* Status of the CFR capture filter configuration based on wmi_cfr_capture_filter_status_t */
+    A_UINT32 status; /* wmi_cfr_capture_filter_status_t */
+    A_UINT32 pdev_id;
+    /*
+     * Fields for peer CFR capture support -
+     * These fields are ONLY populated for peer capture responses.
+     * For filter capture responses, these remain 0.
+     */
+    A_UINT32 vdev_id;           /* VDEV ID (0 for filter capture) */
+    wmi_mac_addr mac_addr;      /* Peer MAC address (all zeros for filter capture) */
+    A_UINT32 request;           /* WMI_PEER_CFR_CAPTURE_ENABLE/DISABLE (0 for filter capture) */
+} wmi_cfr_capture_filter_resp_event_fixed_param;
+
+
+/* max beacon bmiss bitmask array size, in 32-bit words */
+#define WMI_MAX_BCN_BMISS_HISTORY_LENGTH 8
+
+/* max MCS counters supported for enhance stats */
+#define WMI_ENHANCE_STATS_MAX_MCS_COUNTERS 16
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_vdev_beacon_stats */
+    A_UINT32 vdev_id; /* ID of the vdev these beacon stats are from */
+    /* length:
+     * Number of A_UINT32 elements within the bmiss_bitmask array which
+     * contain valid data.
+     * Array elements beyond this limit should be ignored.
+     */
+    A_UINT32 length;
+    /* bmiss_bitmask:
+     * Beacon miss bitmask indicating which beacons got missed from up to
+     * the last 255 expected beacons (32*8 bits).
+     * Only bmiss_bitmask[0] through bmiss_bitmask[length-1] (inclusive)
+     * contain valid data.
+     */
+    A_UINT32 bmiss_bitmask[WMI_MAX_BCN_BMISS_HISTORY_LENGTH];
+} wmi_vdev_beacon_stats;
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_qdata_congestion_stats */
+    A_UINT32 vdev_id; /* ID of the vdev these congestion stats are from */
+    /* cca_busy_time:
+     * Number of milliseconds during which CCA is busy,
+     * out of total time spent on the channel
+     */
+    A_UINT32 cca_busy_time;
+    /* on_time:
+     * Total time in milliseconds for which we were on the channel
+     * and monitored
+     */
+    A_UINT32 on_time;
+} wmi_vdev_congestion_stats;
+
+typedef struct {
+    A_UINT32 tlv_header; /* TLV tag and len; tag equals WMITLV_TAG_STRUC_wmi_vdev_data_stats */
+    A_UINT32 vdev_id; /* ID of the vdev these data stats are from */
+    /* Set of TX MCS counters for data PPDUs */
+    A_UINT32 tx_mcs_data_ppdu[WMI_ENHANCE_STATS_MAX_MCS_COUNTERS];
+    /* Set of TX BW counters for data PPDUs */
+    A_UINT32 tx_bw_data_ppdu[WMI_STATS_EXT_EVENT_VDEV_EXT_BW_COUNTERS_MAX];
+    /* Set of RX MCS counters for data PPDUs */
+    A_UINT32 rx_mcs_data_ppdu[WMI_ENHANCE_STATS_MAX_MCS_COUNTERS];
+    /* Set of RX BW counters for data PPDUs */
+    A_UINT32 rx_bw_data_ppdu[WMI_STATS_EXT_EVENT_VDEV_EXT_BW_COUNTERS_MAX];
+} wmi_vdev_data_stats;
 
 
 #define WMI_UNIFIED_CHAIN_PHASE_MASK 0x0000ffff
@@ -47137,15 +47360,6 @@ typedef struct {
     A_UINT32 agc_gain_tbl_index[WMI_MAX_CHAINS/WMI_CFR_AGC_GAIN_CHAINS_PER_U32];
 } wmi_peer_cfr_capture_event_phase_fixed_param;
 
-#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_OK      0x80000000
-#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_OK_S    31
-
-/* Failed to capture CFR as peer is in power save mode */
-#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_PS_FAILED      0x40000000
-#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_PS_FAILED_S    30
-
-#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_TX      0x00000003
-#define WMI_PEER_CFR_CAPTURE_EVT_STATUS_TX_S    0
 
 /**
  *  wmi_cold_boot_cal_data config flags
@@ -48018,12 +48232,27 @@ typedef struct {
      */
     A_UINT32 capture_count;
 
+    /* unassoc_capture_config:
+     * Bit 0:    Enable unassociated capture mode
+     * Bits 31:1 Reserved
+     */
+    A_UINT32 unassoc_capture_config;
+
+    /* Target channel frequency in MHz */
+    A_UINT32 unassoc_channel_mhz;
+
+    /* Target channel phy_mode */
+    A_UINT32 unassoc_phy_mode; /* WLAN_PHY_MODE */
 /*
  * A variable-length TLV array of wmi_cfr_filter_group_config will
  * follow this fixed_param TLV
  * wmi_cfr_filter_group_config filter_group_config[];
  */
 } wmi_cfr_capture_filter_cmd_fixed_param;
+
+/* CFR Capture macros to get/set the unassociated capture mode enable flag */
+#define WMI_CFR_UNASSOC_CAPTURE_EN_GET(x)        WMI_GET_BITS(x, 0, 1)
+#define WMI_CFR_UNASSOC_CAPTURE_EN_SET(x, value) WMI_SET_BITS(x, 0, 1, value)
 
 enum wmi_oem_data_evt_cause {
     WMI_OEM_DATA_EVT_CAUSE_UNSPECIFIED = 0,
