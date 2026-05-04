@@ -133,6 +133,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	struct drm_event event;
 	int rc = 0;
 	struct sde_kms *sde_kms;
+	int hbm = 0;
 
 	sde_kms = sde_connector_get_kms(&c_conn->base);
 	if (!sde_kms) {
@@ -182,7 +183,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 				c_conn->base.dev, &event, (u8 *)&brightness);
 		}
 		rc = c_conn->ops.set_backlight(&c_conn->base,
-				c_conn->display, bl_lvl);
+				c_conn->display, bl_lvl, hbm);
 
 		if (!rc) {
 			sde_dimming_bl_notify(c_conn, &display->panel->bl_config);
@@ -727,7 +728,7 @@ static int _sde_connector_update_dimming_bl_lut(struct sde_connector *c_conn,
 	bl_config->dimming_bl_lut = msm_property_get_blob(&c_conn->property_info,
 			&c_state->property_state, &sz, CONNECTOR_PROP_DIMMING_BL_LUT);
 	rc = c_conn->ops.set_backlight(&c_conn->base,
-			dsi_display, bl_config->bl_level);
+			dsi_display, bl_config->bl_level, 0);
 	if (!rc)
 		c_conn->unset_bl_level = 0;
 
@@ -841,7 +842,7 @@ static int _sde_connector_update_bl_scale(struct sde_connector *c_conn)
 		bl_config->bl_scale, bl_config->bl_scale_sv,
 		bl_config->bl_level);
 	rc = c_conn->ops.set_backlight(&c_conn->base,
-			dsi_display, bl_config->bl_level);
+			dsi_display, bl_config->bl_level, 0);
 
 	if (!rc) {
 		sde_dimming_bl_notify(c_conn, bl_config);
