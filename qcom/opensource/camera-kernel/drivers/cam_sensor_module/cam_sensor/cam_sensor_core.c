@@ -14,6 +14,10 @@
 #include "cam_packet_util.h"
 #include "cam_req_mgr_dev.h"
 
+#if IS_REACHABLE(CONFIG_HQ_SYSFS_SUPPORT)
+#include <linux/hqsysfs.h>
+#endif
+
 #define CAM_SENSOR_PIPELINE_DELAY_MASK        0xFF
 #define CAM_SENSOR_MODESWITCH_DELAY_SHIFT     8
 
@@ -1070,6 +1074,40 @@ end:
 	return rc;
 }
 
+static void cam_sensor_register_hw_info(const char *name)
+{
+#if IS_REACHABLE(CONFIG_HQ_SYSFS_SUPPORT) && \
+	(defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS))
+	static const struct {
+		const char *name;
+		char *hw_name;
+		enum hardware_id id;
+	} sensors[] = {
+#ifdef CONFIG_ARCH_KIRBY
+		{ "kirby_lce_gc13a0_main", "kirby_lce_gc13a0_main_i", HWID_MAIN_CAM },
+		{ "kirby_txd_ov13b10_main", "kirby_txd_ov13b10_main_ii", HWID_MAIN_CAM },
+		{ "kirby_txd_sc820cs_front", "kirby_txd_sc820cs_front_i", HWID_SUB_CAM },
+		{ "kirby_lce_sc202cs_macro", "kirby_lce_sc202cs_macro_i", HWID_MAIN_CAM_2 },
+#endif
+#ifdef CONFIG_ARCH_LAPIS
+		{ "lapis_lce_gc13a0_main", "lapis_lce_gc13a0_main_i", HWID_MAIN_CAM },
+		{ "lapis_txd_ov13b10_main", "lapis_txd_ov13b10_main_ii", HWID_MAIN_CAM },
+		{ "lapis_lce_gc13a2_front", "lapis_lce_gc13a2_front_i", HWID_SUB_CAM },
+		{ "lapis_txd_gc13a2_front", "lapis_txd_gc13a2_front_ii", HWID_SUB_CAM },
+		{ "lapis_lce_sc202cs_macro", "lapis_lce_sc202cs_macro_i", HWID_MAIN_CAM_2 },
+#endif
+	};
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(sensors); i++) {
+		if (!strcmp(name, sensors[i].name)) {
+			hq_register_hw_info(sensors[i].id, sensors[i].hw_name);
+			return;
+		}
+	}
+#endif
+}
+
 int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 	void *arg)
 {
@@ -1184,6 +1222,8 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 			cam_sensor_power_down(s_ctrl);
 			goto free_power_settings;
 		}
+
+		cam_sensor_register_hw_info(s_ctrl->sensor_name);
 
 		if (s_ctrl->i2c_data.reg_bank_lock_settings.is_settings_valid) {
 			rc = cam_sensor_apply_settings(s_ctrl, 0,

@@ -275,6 +275,10 @@ camera-$(CONFIG_SPECTRA_SENSOR) += \
 	drivers/cam_sensor_module/cam_flash/cam_flash_soc.o \
 	drivers/cam_sensor_module/cam_sensor_module_debug.o
 
+ifneq ($(filter y,$(CONFIG_ARCH_KIRBY) $(CONFIG_ARCH_LAPIS)),)
+camera-$(CONFIG_SPECTRA_SENSOR) += drivers/cam_power/cam_power_dev.o
+endif
+
 camera-$(CONFIG_SPECTRA_CUSTOM) += \
 	drivers/cam_cust/cam_custom_hw_mgr/cam_custom_hw1/cam_custom_sub_mod_soc.o \
 	drivers/cam_cust/cam_custom_hw_mgr/cam_custom_hw1/cam_custom_sub_mod_dev.o \

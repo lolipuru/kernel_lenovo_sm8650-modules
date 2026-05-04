@@ -11,6 +11,8 @@
 #include "cam_mem_mgr.h"
 #include "cam_res_mgr_api.h"
 
+#include "cam_power_dev.h"
+
 #define CAM_SENSOR_PINCTRL_STATE_SLEEP "cam_suspend"
 #define CAM_SENSOR_PINCTRL_STATE_DEFAULT "cam_default"
 
@@ -2325,6 +2327,17 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 				goto power_up_failed;
 			}
 			break;
+#if defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS)
+		case SENSOR_WL2868C_LDO1 ... SENSOR_WL2868C_LDO1_1P1:
+			rc = cam_power_rail_enable(power_setting);
+			if (rc) {
+				CAM_ERR(CAM_SENSOR_UTIL,
+					"External LDO power up failed for sequence %d: %d",
+					power_setting->seq_type, rc);
+				goto power_up_failed;
+			}
+			break;
+#endif
 		default:
 			CAM_ERR(CAM_SENSOR_UTIL, "error power seq type %d",
 				power_setting->seq_type);
@@ -2424,6 +2437,15 @@ power_up_failed:
 				gpio_num_info, GPIOF_OUT_INIT_LOW);
 
 			break;
+#if defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS)
+		case SENSOR_WL2868C_LDO1 ... SENSOR_WL2868C_LDO1_1P1:
+			ret = cam_power_rail_disable(power_setting);
+			if (ret)
+				CAM_ERR(CAM_SENSOR_UTIL,
+					"External LDO rollback failed for sequence %d: %d",
+					power_setting->seq_type, ret);
+			break;
+#endif
 		default:
 			CAM_ERR(CAM_SENSOR_UTIL, "error power seq type %d",
 				power_setting->seq_type);
@@ -2594,6 +2616,22 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 				CAM_ERR(CAM_SENSOR_UTIL,
 					"Error disabling VREG GPIO");
 			break;
+#if defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS)
+		case SENSOR_WL2868C_LDO1 ... SENSOR_WL2868C_LDO1_1P1:
+			for (i = ctrl->power_setting_size - 1; i >= 0; i--) {
+				ps = &ctrl->power_setting[i];
+				if (ps->seq_type != pd->seq_type || !ps->ldo_generation)
+					continue;
+
+				ret = cam_power_rail_disable(ps);
+				if (ret)
+					CAM_ERR(CAM_SENSOR_UTIL,
+						"External LDO power down failed for sequence %d: %d",
+						pd->seq_type, ret);
+				break;
+			}
+			break;
+#endif
 		default:
 			CAM_ERR(CAM_SENSOR_UTIL, "error power seq type %d",
 				pd->seq_type);
@@ -2605,6 +2643,20 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 			usleep_range(pd->delay * 1000,
 				(pd->delay * 1000) + 5);
 	}
+
+#if defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS)
+	for (i = ctrl->power_setting_size - 1; i >= 0; i--) {
+		ps = &ctrl->power_setting[i];
+		if (!ps->ldo_generation)
+			continue;
+
+		ret = cam_power_rail_disable(ps);
+		if (ret)
+			CAM_ERR(CAM_SENSOR_UTIL,
+				"External LDO cleanup failed for sequence %d: %d",
+				ps->seq_type, ret);
+	}
+#endif
 
 	if (ctrl->cam_pinctrl_status) {
 		ret = pinctrl_select_state(

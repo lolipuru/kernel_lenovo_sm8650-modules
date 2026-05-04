@@ -111,6 +111,16 @@ enum msm_camera_power_seq_type {
 	SENSOR_CUSTOM_GPIO1,
 	SENSOR_CUSTOM_GPIO2,
 	SENSOR_VANA1,
+#if defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS)
+	SENSOR_WL2868C_LDO1 = 0x0d,
+	SENSOR_WL2868C_LDO2,
+	SENSOR_WL2868C_LDO3,
+	SENSOR_WL2868C_LDO4,
+	SENSOR_WL2868C_LDO5,
+	SENSOR_WL2868C_LDO6,
+	SENSOR_WL2868C_LDO7,
+	SENSOR_WL2868C_LDO1_1P1,
+#endif
 	SENSOR_SEQ_TYPE_MAX,
 };
 
@@ -322,6 +332,9 @@ struct cam_sensor_power_setting {
 	unsigned short delay;
 	void *data[10];
 	bool valid_config;
+#if defined(CONFIG_ARCH_KIRBY) || defined(CONFIG_ARCH_LAPIS)
+	u32 ldo_generation;
+#endif
 };
 
 struct cam_sensor_board_info {
