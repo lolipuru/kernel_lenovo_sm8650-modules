@@ -14,9 +14,11 @@
 #include <linux/module.h>
 #include <linux/input.h>
 #include <linux/of_device.h>
-#include <linux/soc/qcom/fsa4480-i2c.h>
 #if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 #include <linux/soc/qcom/wcd939x-i2c.h>
+#endif
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C) || IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+#include <linux/soc/qcom/fsa4480-i2c.h>
 #endif
 #include <linux/pm_qos.h>
 #include <linux/nvmem-consumer.h>
@@ -96,6 +98,12 @@ struct msm_asoc_mach_data {
 	bool is_afe_config_done;
 	struct device_node *fsa_handle;
 	struct device_node *wcd_usbss_handle;
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+	struct device_node *fsa4480_handle;
+#endif
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+	struct device_node *fsa4480_sub_handle;
+#endif
 	struct clk *lpass_audio_hw_vote;
 	int core_audio_vote_count;
 	u32 wsa_max_devs;
@@ -144,6 +152,24 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.key_code[2] = KEY_VOLUMEUP,
 	.key_code[3] = KEY_VOLUMEDOWN,
 	.key_code[4] = 0,
+};
+
+/*
+ * Need to report LINEIN
+ * if R/L channel impedance is larger than 5K ohm
+ */
+static struct wcd_mbhc_config wcd_mbhc_cfg = {
+	.read_fw_bin = false,
+	.calibration = NULL,
+	.detect_extn_cable = true,
+	.mono_stero_detection = false,
+	.swap_gnd_mic = NULL,
+	.hs_ext_micbias = true,
+	.key_code[0] = KEY_MEDIA,
+	.key_code[1] = KEY_VOICECOMMAND,
+	.key_code[2] = KEY_VOLUMEUP,
+	.key_code[3] = KEY_VOLUMEDOWN,
+	.key_code[4] = 0,
 	.key_code[5] = 0,
 	.key_code[6] = 0,
 	.key_code[7] = 0,
@@ -169,11 +195,13 @@ static bool msm_usbc_swap_gnd_mic(struct snd_soc_component *component, bool acti
 		ret = fsa4480_switch_event(pdata->fsa_handle, FSA_MIC_GND_SWAP);
 	} else {
 #if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
-		if (wcd_mbhc_cfg.usbss_hsj_connect_enable)
-			ret = wcd_usbss_switch_update(WCD_USBSS_GND_MIC_SWAP_HSJ,
+	if (!pdata->wcd_usbss_handle)
+		return false;
+	if (wcd_mbhc_cfg.usbss_hsj_connect_enable)
+		ret = wcd_usbss_switch_update(WCD_USBSS_GND_MIC_SWAP_HSJ,
 							WCD_USBSS_CABLE_CONNECT);
-		else if (wcd_mbhc_cfg.enable_usbc_analog)
-			ret = wcd_usbss_switch_update(WCD_USBSS_GND_MIC_SWAP_AATC,
+	else if (wcd_mbhc_cfg.enable_usbc_analog)
+		ret = wcd_usbss_switch_update(WCD_USBSS_GND_MIC_SWAP_AATC,
 							WCD_USBSS_CABLE_CONNECT);
 #endif
 	}
@@ -181,6 +209,21 @@ static bool msm_usbc_swap_gnd_mic(struct snd_soc_component *component, bool acti
 		return true;
 	else
 		return false;
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+	if (!pdata->fsa4480_handle)
+		return false;
+	if (fsa4480_switch_C1_enable)
+		ret = fsa4480_switch_event(pdata->fsa4480_handle, FSA_MIC_GND_SWAP);
+#endif
+
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+	if (!pdata->fsa4480_sub_handle)
+		return false;
+	if (fsa4480_switch_C2_enable)
+		ret += fsa4480_sub_switch_event(pdata->fsa4480_sub_handle, FSA_MIC_GND_SWAP);
+#endif
+
+	return ret;
 }
 
 static void msm_parse_upd_configuration(struct platform_device *pdev,
@@ -449,6 +492,7 @@ static const struct snd_soc_dapm_widget msm_int_dapm_widgets[] = {
 	SND_SOC_DAPM_MIC("Digital Mic7", NULL),
 };
 
+#ifndef CONFIG_AUDIO_BTFM_PROXY
 static int msm_wcn_init(struct snd_soc_pcm_runtime *rtd)
 {
 	unsigned int rx_ch[WCN_CDC_SLIM_RX_CH_MAX] = {157, 158};
@@ -464,6 +508,7 @@ static int msm_wcn_init(struct snd_soc_pcm_runtime *rtd)
 	msm_common_dai_link_init(rtd);
     return ret;
 }
+#endif
 
 static int msm_wcn_init_btfm(struct snd_soc_pcm_runtime *rtd)
 {
@@ -705,16 +750,16 @@ static struct snd_soc_dai_link msm_wcn_btfm_proxy_be_dai_links[] = {
                 .ignore_suspend = 1,
                 SND_SOC_DAILINK_REG(btfm_0_rx),
         },
-	{
-		.name = LPASS_BE_BTFM_PROXY_TX_0,
-		.stream_name = LPASS_BE_BTFM_PROXY_TX_0,
-		.capture_only = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST},
-		.ops = &msm_common_be_ops,
-		.ignore_suspend = 1,
-		SND_SOC_DAILINK_REG(btfm_0_tx),
-	},
+        {
+                .name = LPASS_BE_BTFM_PROXY_TX_0,
+                .stream_name = LPASS_BE_BTFM_PROXY_TX_0,
+                .capture_only = 1,
+                .trigger = {SND_SOC_DPCM_TRIGGER_POST,
+                        SND_SOC_DPCM_TRIGGER_POST},
+                .ops = &msm_common_be_ops,
+                .ignore_suspend = 1,
+                SND_SOC_DAILINK_REG(btfm_0_tx),
+        },
 	{
 		.name = LPASS_BE_BTFM_AUD_TX_3,
 		.stream_name = LPASS_BE_BTFM_AUD_TX_3,
@@ -1320,7 +1365,7 @@ static struct snd_soc_dai_link msm_tdm_dai_links[] = {
 		.ops = &msm_common_be_ops,
 		.ignore_suspend = 1,
 		.ignore_pmdown_time = 1,
-		SND_SOC_DAILINK_REG(sec_tdm_rx_0),
+		SND_SOC_DAILINK_REG(sec_tdm_rx_smartpa),
 	},
 	{
 		.name = LPASS_BE_SEC_TDM_TX_0,
@@ -1330,7 +1375,7 @@ static struct snd_soc_dai_link msm_tdm_dai_links[] = {
 			SND_SOC_DPCM_TRIGGER_POST},
 		.ops = &msm_common_be_ops,
 		.ignore_suspend = 1,
-		SND_SOC_DAILINK_REG(sec_tdm_tx_0),
+		SND_SOC_DAILINK_REG(sec_tdm_tx_smartpa),
 	},
 	{
 		.name = LPASS_BE_TERT_TDM_RX_0,
@@ -1706,46 +1751,46 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev,
 			ADD_HAC_DAI_LINK(msm_pineapple_dai_links,
 				msm_tx_cdc_dma_be_dai_links, total_links)
 		} else {
-			memcpy(msm_pineapple_dai_links + total_links,
-				msm_rx_tx_cdc_dma_be_dai_links,
-				sizeof(msm_rx_tx_cdc_dma_be_dai_links));
-			total_links +=
-				ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links);
+		memcpy(msm_pineapple_dai_links + total_links,
+		       msm_rx_tx_cdc_dma_be_dai_links,
+		       sizeof(msm_rx_tx_cdc_dma_be_dai_links));
+		total_links +=
+			ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links);
 
-			switch (pdata->wsa_max_devs) {
-			case MONO_SPEAKER:
-			case STEREO_SPEAKER:
+		switch (pdata->wsa_max_devs) {
+		case MONO_SPEAKER:
+		case STEREO_SPEAKER:
+			memcpy(msm_pineapple_dai_links + total_links,
+			       msm_wsa_cdc_dma_be_dai_links,
+			       sizeof(msm_wsa_cdc_dma_be_dai_links));
+			total_links += ARRAY_SIZE(msm_wsa_cdc_dma_be_dai_links);
+			break;
+		case QUAD_SPEAKER:
+			if (of_find_property(dev->of_node,
+					"qcom,dedicated-wsa2", NULL)) {
 				memcpy(msm_pineapple_dai_links + total_links,
 					msm_wsa_cdc_dma_be_dai_links,
 					sizeof(msm_wsa_cdc_dma_be_dai_links));
 				total_links += ARRAY_SIZE(msm_wsa_cdc_dma_be_dai_links);
-				break;
-			case QUAD_SPEAKER:
-				if (of_find_property(dev->of_node,
-					"qcom,dedicated-wsa2", NULL)) {
-					memcpy(msm_pineapple_dai_links + total_links,
-						msm_wsa_cdc_dma_be_dai_links,
-						sizeof(msm_wsa_cdc_dma_be_dai_links));
-					total_links += ARRAY_SIZE(msm_wsa_cdc_dma_be_dai_links);
 
-					memcpy(msm_pineapple_dai_links + total_links,
-						msm_wsa2_cdc_dma_be_dai_links,
-						sizeof(msm_wsa2_cdc_dma_be_dai_links));
-					total_links += ARRAY_SIZE(msm_wsa2_cdc_dma_be_dai_links);
-				} else {
-					memcpy(msm_pineapple_dai_links + total_links,
-						msm_wsa2_cdc_dma_be_dai_links,
-						sizeof(msm_wsa2_cdc_dma_be_dai_links));
-					total_links += ARRAY_SIZE(msm_wsa2_cdc_dma_be_dai_links);
+				memcpy(msm_pineapple_dai_links + total_links,
+					msm_wsa2_cdc_dma_be_dai_links,
+					sizeof(msm_wsa2_cdc_dma_be_dai_links));
+				total_links += ARRAY_SIZE(msm_wsa2_cdc_dma_be_dai_links);
+			} else {
+				memcpy(msm_pineapple_dai_links + total_links,
+					msm_wsa2_cdc_dma_be_dai_links,
+					sizeof(msm_wsa2_cdc_dma_be_dai_links));
+				total_links += ARRAY_SIZE(msm_wsa2_cdc_dma_be_dai_links);
 
-					memcpy(msm_pineapple_dai_links + total_links,
-						msm_wsa_wsa2_cdc_dma_be_dai_links,
-						sizeof(msm_wsa_wsa2_cdc_dma_be_dai_links));
+				memcpy(msm_pineapple_dai_links + total_links,
+					msm_wsa_wsa2_cdc_dma_be_dai_links,
+					sizeof(msm_wsa_wsa2_cdc_dma_be_dai_links));
 					total_links +=
 						ARRAY_SIZE(msm_wsa_wsa2_cdc_dma_be_dai_links);
-				}
-				break;
-			default:
+			}
+			break;
+		default:
 				dev_dbg(dev,
 					"%s: Unexpected number of WSAs, wsa_max_devs: %d\n",
 					__func__, pdata->wsa_max_devs);
@@ -1803,14 +1848,14 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev,
 				sizeof(msm_wcn_btfm_proxy_be_dai_links));
 			total_links += ARRAY_SIZE(msm_wcn_btfm_proxy_be_dai_links);
 		} else {
-			rc = of_property_read_u32(dev->of_node, "qcom,wcn-bt", &val);
-			if (!rc && val) {
-				dev_dbg(dev, "%s(): WCN BT support present\n",
-					__func__);
-				memcpy(msm_pineapple_dai_links + total_links,
-					msm_wcn_be_dai_links,
-					sizeof(msm_wcn_be_dai_links));
-				total_links += ARRAY_SIZE(msm_wcn_be_dai_links);
+		rc = of_property_read_u32(dev->of_node, "qcom,wcn-bt", &val);
+		if (!rc && val) {
+			dev_dbg(dev, "%s(): WCN BT support present\n",
+				__func__);
+			memcpy(msm_pineapple_dai_links + total_links,
+			       msm_wcn_be_dai_links,
+			       sizeof(msm_wcn_be_dai_links));
+			total_links += ARRAY_SIZE(msm_wcn_be_dai_links);
 			} else {
 				rc = of_property_read_u32(dev->of_node, "qcom,wcn-btfm", &val);
 				if (!rc && val) {
@@ -1931,12 +1976,12 @@ static int msm_int_wsa883x_init(struct snd_soc_pcm_runtime *rtd)
 			wsa883x_codec_info_create_codec_entry(pdata->codec_root,
 					component);
 		} else {
-			wsa883x_set_channel_map(component, &spkleft_ports[0],
-					WSA883X_MAX_SWR_PORTS, &ch_mask[0],
-					&ch_rate[0], &spkleft_port_types[0]);
+		wsa883x_set_channel_map(component, &spkleft_ports[0],
+				WSA883X_MAX_SWR_PORTS, &ch_mask[0],
+				&ch_rate[0], &spkleft_port_types[0]);
 
-			wsa883x_codec_info_create_codec_entry(pdata->codec_root,
-					component);
+		wsa883x_codec_info_create_codec_entry(pdata->codec_root,
+				component);
 		}
 	}
 
@@ -2452,8 +2497,8 @@ static int pineapple_ssr_enable(struct device *dev, void *data)
 			rtd_wsa = snd_soc_get_pcm_runtime(card,
 				&card->dai_link[ARRAY_SIZE(msm_tx_cdc_dma_be_dai_links)]);
 		else
-			rtd_wsa = snd_soc_get_pcm_runtime(card,
-				&card->dai_link[ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links)]);
+		rtd_wsa = snd_soc_get_pcm_runtime(card,
+			&card->dai_link[ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links)]);
 		if (!rtd_wsa) {
 			dev_dbg(dev,
 			"%s: snd_soc_get_pcm_runtime for %s failed!\n",
@@ -2714,11 +2759,21 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 		wcd_mbhc_cfg.usbss_hsj_connect_enable)
 		wcd_mbhc_cfg.swap_gnd_mic = msm_usbc_swap_gnd_mic;
 
-	pdata->fsa_handle = of_parse_phandle(pdev->dev.of_node,
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+	pdata->fsa4480_handle = of_parse_phandle(pdev->dev.of_node,
 					"fsa4480-i2c-handle", 0);
-	if (!pdata->fsa_handle)
+	if (!pdata->fsa4480_handle)
 		dev_dbg(&pdev->dev, "property %s not detected in node %s\n",
 			"fsa4480-i2c-handle", pdev->dev.of_node->full_name);
+#endif
+
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+	pdata->fsa4480_sub_handle = of_parse_phandle(pdev->dev.of_node,
+					"fsa4480-sub-i2c-handle", 0);
+	if (!pdata->fsa4480_sub_handle)
+		dev_dbg(&pdev->dev, "property %s not detected in node %s\n",
+			"fsa4480-sub-i2c-handle", pdev->dev.of_node->full_name);
+#endif
 
 	pdata->wcd_usbss_handle = of_parse_phandle(pdev->dev.of_node,
 					"wcd939x-i2c-handle", 0);

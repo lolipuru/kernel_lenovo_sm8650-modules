@@ -21,7 +21,7 @@
 #if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 #include <linux/soc/qcom/wcd939x-i2c.h>
 #endif
-#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C) || IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
 #include <linux/soc/qcom/fsa4480-i2c.h>
 #endif
 #include <linux/usb/typec.h>
@@ -760,7 +760,7 @@ void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 				__func__);
 			}
 		}
-
+		pr_debug("%s: headphone impedance left(%d) right(%d)\n", __func__,mbhc->zl, mbhc->zr);
 		/* Do not calculate impedance again for lineout
 		 * as during playback pa is on and impedance values
 		 * will not be correct resulting in lineout detected
@@ -799,6 +799,8 @@ void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 		wcd_mbhc_clr_and_turnon_hph_padac(mbhc);
 	}
 	pr_debug("%s: leave hph_status %x\n", __func__, mbhc->hph_status);
+	printk("%s: Reporting %s %d(%x)\n", __func__,insertion ? "insertion":"removal",jack_type, mbhc->hph_status);
+
 }
 EXPORT_SYMBOL(wcd_mbhc_report_plug);
 
@@ -1185,13 +1187,15 @@ static irqreturn_t wcd_mbhc_mech_plug_detect_irq(int irq, void *data)
 		pr_err("%s: NULL irq data\n", __func__);
 		return IRQ_NONE;
 	}
-	/* WCD939x USB AATC did not required mech plug detection, will receive
+	/* WCD USB AATC did not required mech plug detection, will receive
 	 * insertion/removal events from UCSI layer
 	 */
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 	if (mbhc->mbhc_cfg->enable_usbc_analog && mbhc->wcd_usbss_aatc_dev_np) {
 		pr_debug("%s: leave, (irq_none)\n", __func__);
 		return IRQ_NONE;
 	}
+#endif
 
 	if (unlikely((mbhc->mbhc_cb->lock_sleep(mbhc, true)) == false)) {
 		pr_warn("%s: failed to hold suspend\n", __func__);
@@ -1791,6 +1795,29 @@ static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 }
 #endif
 
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+static int wcd_mbhc_usbc_sub_ana_event_handler(struct notifier_block *nb,
+					   unsigned long mode, void *ptr)
+{
+	struct wcd_mbhc *mbhc = container_of(nb, struct wcd_mbhc, aatc_dev_sub_nb);
+
+	if (!mbhc)
+		return -EINVAL;
+
+	if (mode == TYPEC_ACCESSORY_AUDIO) {
+		dev_dbg(mbhc->component->dev, "enter, %s: mode = %lu\n", __func__, mode);
+
+		if (mbhc->mbhc_cb->clk_setup)
+			mbhc->mbhc_cb->clk_setup(mbhc->component, true);
+		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_L_DET_EN, 1);
+	} else if (mode == TYPEC_MAX_ACCESSORY) {
+		if (mbhc->mbhc_cb->surge_reset_routine)
+			mbhc->mbhc_cb->surge_reset_routine(mbhc);
+	}
+	return 0;
+}
+#endif
+
 int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *mbhc_cfg)
 {
 	int rc = 0;
@@ -1828,12 +1855,27 @@ int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *mbhc_cfg)
 		dev_dbg(mbhc->component->dev, "%s: usbc analog enabled\n",
 					__func__);
 		mbhc->swap_thr = GND_MIC_USBC_SWAP_THRESHOLD;
-		if (!mbhc->wcd_usbss_aatc_dev_np && !mbhc->fsa_aatc_dev_np) {
+		if (IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C))
+			mbhc->aatc_dev_np = of_parse_phandle(card->dev->of_node,
+							"wcd939x-i2c-handle", 0);
+		else if (IS_ENABLED(CONFIG_QCOM_FSA4480_I2C))
+			mbhc->aatc_dev_np = of_parse_phandle(card->dev->of_node,
+							"fsa4480-i2c-handle", 0);
+		if (!mbhc->aatc_dev_np) {
 			dev_err(card->dev, "%s: wcd939x or fsa i2c node not found\n",
 									__func__);
 			rc = -EINVAL;
 			goto err;
 		}
+
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+		mbhc->aatc_dev_sub_np = of_parse_phandle(card->dev->of_node,
+						"fsa4480-sub-i2c-handle", 0);
+		if (!mbhc->aatc_dev_sub_np) {
+			dev_err(card->dev, "%s: fsa4480 sub i2c node not found\n",
+									__func__);
+		}
+#endif
 	}
 
 	/* Disable moisture detect and duty cycle for WCD USB AATC HS*/
@@ -1878,6 +1920,11 @@ int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *mbhc_cfg)
 		if (mbhc->fsa_aatc_dev_np)
 			rc = fsa4480_reg_notifier(&mbhc->aatc_dev_nb, mbhc->fsa_aatc_dev_np);
 #endif
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+		mbhc->aatc_dev_sub_nb.notifier_call = wcd_mbhc_usbc_sub_ana_event_handler;
+		mbhc->aatc_dev_sub_nb.priority = 0;
+		rc = fsa4480_sub_reg_notifier(&mbhc->aatc_dev_sub_nb, mbhc->aatc_dev_sub_np);
+#endif
 	}
 
 	return rc;
@@ -1917,10 +1964,13 @@ void wcd_mbhc_stop(struct wcd_mbhc *mbhc)
 	if (mbhc->mbhc_cfg->enable_usbc_analog && mbhc->wcd_usbss_aatc_dev_np)
 		wcd_usbss_unreg_notifier(&mbhc->aatc_dev_nb, mbhc->wcd_usbss_aatc_dev_np);
 #endif
-
 #if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
 	if (mbhc->mbhc_cfg->enable_usbc_analog && mbhc->fsa_aatc_dev_np)
 		fsa4480_unreg_notifier(&mbhc->aatc_dev_nb, mbhc->fsa_aatc_dev_np);
+#endif
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_SUB_I2C)
+	if (mbhc->mbhc_cfg->enable_usbc_analog)
+		fsa4480_sub_unreg_notifier(&mbhc->aatc_dev_sub_nb, mbhc->aatc_dev_sub_np);
 #endif
 
 	pr_debug("%s: leave\n", __func__);
@@ -2015,6 +2065,7 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_component *component,
 	mbhc->swap_thr = GND_MIC_SWAP_THRESHOLD;
 	mbhc->hphl_cross_conn_thr = HPHL_CROSS_CONN_THRESHOLD;
 	mbhc->hphr_cross_conn_thr = HPHR_CROSS_CONN_THRESHOLD;
+	pr_debug("%s: mbhc->hphl_swh = %d, mbhc->gnd_swh = %d\n", __func__, mbhc->hphl_swh, mbhc->gnd_swh);
 
 	if (mbhc->intr_ids == NULL) {
 		pr_err("%s: Interrupt mapping not provided\n", __func__);
