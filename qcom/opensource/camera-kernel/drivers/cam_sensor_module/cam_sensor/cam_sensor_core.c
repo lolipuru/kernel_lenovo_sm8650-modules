@@ -13,6 +13,7 @@
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
 #include "cam_req_mgr_dev.h"
+#include <linux/hqsysfs.h>
 
 #define CAM_SENSOR_PIPELINE_DELAY_MASK        0xFF
 #define CAM_SENSOR_MODESWITCH_DELAY_SHIFT     8
@@ -1183,6 +1184,32 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 				s_ctrl->sensordata->slave_info.sensor_id);
 			cam_sensor_power_down(s_ctrl);
 			goto free_power_settings;
+		} else {
+			const char *s_name = s_ctrl->sensor_name;
+            // Lapis
+            if (strcmp(s_name, "lapis_lce_gc13a0_main") == 0) {
+                hq_register_hw_info(0x30, "lapis_lce_gc13a0_main_i");
+            } else if (strcmp(s_name, "lapis_txd_ov13b10_main") == 0) {
+                hq_register_hw_info(0x30, "lapis_txd_ov13b10_main_ii");
+            } else if (strcmp(s_name, "lapis_lce_gc13a2_front") == 0) {
+                hq_register_hw_info(0x33, "lapis_lce_gc13a2_front_i");
+            } else if (strcmp(s_name, "lapis_txd_gc13a2_front") == 0) {
+                hq_register_hw_info(0x33, "lapis_txd_gc13a2_front_ii");
+            } else if (strcmp(s_name, "lapis_lce_sc202cs_macro") == 0) {
+                hq_register_hw_info(0x31, "lapis_lce_sc202cs_macro_i");
+            }
+            // Kirby
+            else if (strcmp(s_name, "kirby_lce_gc13a0_main") == 0) {
+                hq_register_hw_info(0x30, "kirby_lce_gc13a0_main_i");
+            } else if (strcmp(s_name, "kirby_txd_ov13b10_main") == 0) {
+                hq_register_hw_info(0x30, "kirby_txd_ov13b10_main_ii");
+            } else if (strcmp(s_name, "kirby_txd_sc820cs_front") == 0) {
+                hq_register_hw_info(0x33, "kirby_txd_sc820cs_front_i");
+            } else if (strcmp(s_name, "kirby_lce_sc202cs_macro") == 0) {
+                hq_register_hw_info(0x31, "kirby_lce_sc202cs_macro_i");
+            } else {
+                CAM_ERR(CAM_SENSOR, "sensor name %s is not supported", s_name);
+            }
 		}
 
 		if (s_ctrl->i2c_data.reg_bank_lock_settings.is_settings_valid) {
