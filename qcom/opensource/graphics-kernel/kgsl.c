@@ -4574,8 +4574,10 @@ static void kgsl_gpumem_vm_open(struct vm_area_struct *vma)
 {
 	struct kgsl_mem_entry *entry = vma->vm_private_data;
 
-	if (!kgsl_mem_entry_get(entry))
+	if (!kgsl_mem_entry_get(entry)) {
 		vma->vm_private_data = NULL;
+		return;
+	}
 
 	atomic_inc(&entry->map_count);
 }
@@ -4709,9 +4711,9 @@ static unsigned long _gpu_set_svm_region(struct kgsl_process_private *private,
 	return addr;
 }
 
-static unsigned long get_align(struct kgsl_mem_entry *entry)
+unsigned long kgsl_get_align(struct kgsl_memdesc *memdesc)
 {
-	int bit = kgsl_memdesc_get_align(&entry->memdesc);
+	u32 bit = kgsl_memdesc_get_align(memdesc);
 
 	if (bit >= ilog2(SZ_2M))
 		return SZ_2M;
@@ -4720,7 +4722,7 @@ static unsigned long get_align(struct kgsl_mem_entry *entry)
 	else if (bit >= ilog2(SZ_64K))
 		return SZ_64K;
 
-	return SZ_4K;
+	return PAGE_SIZE;
 }
 
 static unsigned long set_svm_area(struct file *file,
@@ -4753,7 +4755,7 @@ static unsigned long get_svm_unmapped_area(struct file *file,
 {
 	struct kgsl_device_private *dev_priv = file->private_data;
 	struct kgsl_process_private *private = dev_priv->process_priv;
-	unsigned long align = get_align(entry);
+	unsigned long align = kgsl_get_align(&entry->memdesc);
 	unsigned long ret, iova;
 	u64 start = 0, end = 0;
 	struct vm_area_struct *vma;
